@@ -54,9 +54,13 @@ func pegaMidia(endereco string) error {
 	bytes, err := ioutil.ReadAll(res.Body)
 	defer res.Body.Close()
 	html := string(bytes)
-	p := strings.Index(html, `<script type="text/javascript">window._sharedData = `)
-	q := strings.Index(html[p:], `;</script>`)
-	sharedData := strings.Replace(html[p:p+q], `<script type="text/javascript">window._sharedData = `, "", 1)
+	iniSharedData := `<script type="text/javascript">window._sharedData = `
+	fimSharedData := `;</script>`
+	p := strings.Index(html, iniSharedData)
+	q := strings.Index(html[p:], fimSharedData)
+	sharedData := strings.Replace(html[p:p+q], iniSharedData, "", 1)
+	fmt.Println(sharedData)
+	return nil
 	sd := SharedData{}
 	if err := json.Unmarshal([]byte(sharedData), &sd); err != nil {
 		return err
