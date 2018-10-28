@@ -59,8 +59,6 @@ func pegaMidia(endereco string) error {
 	p := strings.Index(html, iniSharedData)
 	q := strings.Index(html[p:], fimSharedData)
 	sharedData := strings.Replace(html[p:p+q], iniSharedData, "", 1)
-	fmt.Println(sharedData)
-	return nil
 	sd := SharedData{}
 	if err := json.Unmarshal([]byte(sharedData), &sd); err != nil {
 		return err
