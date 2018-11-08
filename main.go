@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 )
@@ -32,7 +33,37 @@ type SharedData struct {
 	} `json:"entry_data"`
 }
 
+type TrelloExport struct {
+	Actions []struct {
+		Data struct {
+			Card struct {
+				Name string `json:"name"`
+			} `json:"card"`
+		} `json:"data"`
+	} `json:"actions"`
+}
+
 func main() {
+	if _, err := os.Stat("./json.json"); !os.IsNotExist(err) {
+		bytes, err := ioutil.ReadFile("./json.json")
+		if err != nil {
+			log.Fatal(err)
+		}
+		te := TrelloExport{}
+		if err := json.Unmarshal(bytes, &te); err != nil {
+			log.Fatal(err)
+		}
+		out := ""
+		for _, c := range te.Actions {
+			if strings.HasPrefix(c.Data.Card.Name, "https://instagram.com/") {
+				out += c.Data.Card.Name + "\r\n"
+			}
+		}
+		if err := ioutil.WriteFile("./links.txt", []byte(out), 0664); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	bytes, err := ioutil.ReadFile("./i.txt")
 	if err != nil {
 		log.Fatal(err)
