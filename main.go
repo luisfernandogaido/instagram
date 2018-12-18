@@ -1,130 +1,217 @@
 package main
 
 import (
+	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
-	"path"
-	"strings"
+	"net/url"
+	"regexp"
+	"time"
 )
 
-type SharedData struct {
-	EntryData struct {
-		PostPage []struct {
-			GraphSQL struct {
-				ShortcodeMedia struct {
-					Id                    string `json:"id"`
-					DisplayURL            string `json:"display_url"`
-					VideoURL              string `json:"video_url"`
-					EdgeSidecarToChildren struct {
-						Edges []struct {
-							Node struct {
-								DisplayURL string `json:"display_url"`
-								VideoURL   string `json:"video_url"`
-							} `json:"node"`
-						} `json:"edges"`
-					} `json:"edge_sidecar_to_children"`
-				} `json:"shortcode_media"`
-			} `json:"graphql"`
-		} `json:"PostPage"`
-	} `json:"entry_data"`
-}
-
-type TrelloExport struct {
-	Actions []struct {
-		Data struct {
-			Card struct {
-				Name string `json:"name"`
-			} `json:"card"`
-		} `json:"data"`
-	} `json:"actions"`
-}
+var (
+	reSharedData    = regexp.MustCompile(`<script type="text/javascript">window._sharedData = (.*);</script>`)
+	rePageContainer = regexp.MustCompile(`/static/bundles/metro/ProfilePageContainer\.js/([^.]+)\.js`)
+	reQueryId       = regexp.MustCompile(`s.pagination},queryId:"([^"]+)"`)
+)
 
 func main() {
-	if _, err := os.Stat("./json.json"); !os.IsNotExist(err) {
-		bytes, err := ioutil.ReadFile("./json.json")
-		if err != nil {
-			log.Fatal(err)
-		}
-		te := TrelloExport{}
-		if err := json.Unmarshal(bytes, &te); err != nil {
-			log.Fatal(err)
-		}
-		out := ""
-		for _, c := range te.Actions {
-			if strings.HasPrefix(c.Data.Card.Name, "https://instagram.com/") {
-				out += c.Data.Card.Name + "\r\n"
-			}
-		}
-		if err := ioutil.WriteFile("./links.txt", []byte(out), 0664); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
-	bytes, err := ioutil.ReadFile("./i.txt")
+	perfil, err := LoadPerfil("https://www.instagram.com/magnus_carlsen")
 	if err != nil {
 		log.Fatal(err)
 	}
-	urls := strings.Split(string(bytes), "\r\n")
-	for k, url := range urls {
-		if err := pegaMidia(url); err != nil {
-			log.Println(err)
-		}
-		fmt.Println(float64(k+1) / float64(len(urls)))
+	for _, n := range perfil.Nodes {
+		fmt.Println(n.DisplayUrl)
 	}
 }
 
-func pegaMidia(endereco string) error {
-	res, err := http.Get(endereco)
+type Node struct {
+	TypeName           string `json:"__typename"`
+	Id                 string `json:"id"`
+	Shortcode          string `json:"shortcode"`
+	EdgeMediaToComment struct {
+		Count int `json:"count"`
+	} `json:"edge_media_to_comment"`
+	DisplayUrl  string `json:"display_url"`
+	EdgeLikedBy struct {
+		Count int `json:"count"`
+	} `json:"edge_liked_by"`
+	ThumbnailSrc   string `json:"thumbnail_src"`
+	IsVideo        bool   `json:"is_video"`
+	VideoViewCount int    `json:"video_view_count"`
+}
+
+type EdgeOwnerToTimelineMedia struct {
+	Count    int `json:"count"`
+	PageInfo struct {
+		HasNextPage bool   `json:"has_next_page"`
+		EndCursor   string `json:"end_cursor"`
+	} `json:"page_info"`
+	Edges []struct {
+		Node `json:"node"`
+	}
+}
+
+type SharedData struct {
+	EntryData struct {
+		ProfilePage []struct {
+			Graphql struct {
+				User struct {
+					Biography      string `json:"biography"`
+					EdgeFollowedBy struct {
+						Count int `json:"count"`
+					} `json:"edge_followed_by"`
+					EdgeFollow struct {
+						Count int `json:"count"`
+					} `json:"edge_follow"`
+					FullName                 string `json:"full_name"`
+					Id                       string `json:"id"`
+					ProfilePicUrlHd          string `json:"profile_pic_url_hd"`
+					EdgeOwnerToTimelineMedia `json:"edge_owner_to_timeline_media"`
+				} `json:"user"`
+			} `json:"graphql"`
+		} `json:"ProfilePage"`
+	} `json:"entry_data"`
+	RhxGis string `json:"rhx_gis"`
+}
+
+type QueryHashResponse struct {
+	Data struct {
+		User struct {
+			EdgeOwnerToTimelineMedia `json:"edge_owner_to_timeline_media"`
+		} `json:"user"`
+	} `json:"data"`
+	Status string `json:"status"`
+}
+
+type Perfil struct {
+	Biografia     string
+	Seguidores    int
+	Seguindo      int
+	Nome          string
+	Id            string
+	Foto          string
+	Publicacoes   int
+	TemMaisPagina bool
+	FinalCursor   string
+	QueryHash     string
+	Nodes         []Node
+}
+
+type Variables struct {
+	Id    string `json:"id"`
+	First int    `json:"first"`
+	After string `json:"after"`
+}
+
+func LoadPerfil(u string) (Perfil, error) {
+	res, err := http.Get(u)
 	if err != nil {
-		return err
+		log.Fatal(err)
 	}
-	bytes, err := ioutil.ReadAll(res.Body)
 	defer res.Body.Close()
-	html := string(bytes)
-	iniSharedData := `<script type="text/javascript">window._sharedData = `
-	fimSharedData := `;</script>`
-	p := strings.Index(html, iniSharedData)
-	q := strings.Index(html[p:], fimSharedData)
-	sharedData := strings.Replace(html[p:p+q], iniSharedData, "", 1)
-	sd := SharedData{}
-	if err := json.Unmarshal([]byte(sharedData), &sd); err != nil {
-		return err
+	b, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		return Perfil{}, err
 	}
-	sm := sd.EntryData.PostPage[0].GraphSQL.ShortcodeMedia
-	enderecosDownload := make([]string, 0)
-	if len(sm.EdgeSidecarToChildren.Edges) == 0 {
-		if sm.VideoURL != "" {
-			enderecosDownload = append(enderecosDownload, sm.VideoURL)
-		} else {
-			enderecosDownload = append(enderecosDownload, sm.DisplayURL)
+	conteudo := string(b)
+	matches := reSharedData.FindStringSubmatch(conteudo)
+	if len(matches) != 2 {
+		return Perfil{}, errors.New("sharedData não encontrado no perfil")
+	}
+	var sd SharedData
+	if err := json.Unmarshal([]byte(matches[1]), &sd); err != nil {
+		return Perfil{}, err
+	}
+	if len(sd.EntryData.ProfilePage) != 1 {
+		return Perfil{}, errors.New("sharedData não tem exatamente um ProfilePage")
+	}
+	perfil := Perfil{
+		Biografia:     sd.EntryData.ProfilePage[0].Graphql.User.Biography,
+		Seguidores:    sd.EntryData.ProfilePage[0].Graphql.User.EdgeFollowedBy.Count,
+		Seguindo:      sd.EntryData.ProfilePage[0].Graphql.User.EdgeFollow.Count,
+		Nome:          sd.EntryData.ProfilePage[0].Graphql.User.FullName,
+		Id:            sd.EntryData.ProfilePage[0].Graphql.User.Id,
+		Foto:          sd.EntryData.ProfilePage[0].Graphql.User.ProfilePicUrlHd,
+		Publicacoes:   sd.EntryData.ProfilePage[0].Graphql.User.EdgeOwnerToTimelineMedia.Count,
+		TemMaisPagina: sd.EntryData.ProfilePage[0].Graphql.User.EdgeOwnerToTimelineMedia.PageInfo.HasNextPage,
+		FinalCursor:   sd.EntryData.ProfilePage[0].Graphql.User.EdgeOwnerToTimelineMedia.PageInfo.EndCursor,
+		Nodes:         make([]Node, 0),
+	}
+	matches = rePageContainer.FindStringSubmatch(conteudo)
+	if len(matches) != 2 {
+		return Perfil{}, errors.New("arquivo ProfilePageContainer não encontrado")
+	}
+	res2, err := http.Get("https://www.instagram.com" + matches[0])
+	if err != nil {
+		return Perfil{}, err
+	}
+	defer res2.Body.Close()
+	b2, err := ioutil.ReadAll(res2.Body)
+	if err != nil {
+		return Perfil{}, err
+	}
+	matches = reQueryId.FindStringSubmatch(string(b2))
+	if len(matches) != 2 {
+		return Perfil{}, errors.New("query_hash não encontrado em ProfilePageContainer")
+	}
+	perfil.QueryHash = matches[1]
+	edgeOwnerToTimelineMedia := sd.EntryData.ProfilePage[0].Graphql.User.EdgeOwnerToTimelineMedia
+	for {
+		for _, node := range edgeOwnerToTimelineMedia.Edges {
+			perfil.Nodes = append(perfil.Nodes, node.Node)
 		}
-	} else {
-		for _, edge := range sm.EdgeSidecarToChildren.Edges {
-			if edge.Node.VideoURL != "" {
-				enderecosDownload = append(enderecosDownload, edge.Node.VideoURL)
-			} else {
-				enderecosDownload = append(enderecosDownload, edge.Node.DisplayURL)
+		fmt.Println(len(perfil.Nodes))
+		if !edgeOwnerToTimelineMedia.PageInfo.HasNextPage {
+			break
+		}
+		variables := Variables{
+			Id:    perfil.Id,
+			First: 12,
+			After: edgeOwnerToTimelineMedia.PageInfo.EndCursor,
+		}
+		jVariables, err := json.Marshal(variables)
+		if err != nil {
+			return Perfil{}, err
+		}
+		values := url.Values{
+			"query_hash": []string{perfil.QueryHash},
+			"variables":  []string{string(jVariables)},
+		}
+		req, err := http.NewRequest("GET", "https://www.instagram.com/graphql/query/?"+values.Encode(), nil)
+		if err != nil {
+			return Perfil{}, err
+		}
+		signature := fmt.Sprintf("%x", md5.Sum([]byte(fmt.Sprintf("%v:%v", sd.RhxGis, string(jVariables)))))
+		req.Header.Set("x-instagram-gis", signature)
+		b = b[:0]
+		for {
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return Perfil{}, err
 			}
+			if res.StatusCode != 200 {
+				fmt.Println("tomei um gancho")
+				time.Sleep(time.Second)
+				continue
+			}
+			b, err = ioutil.ReadAll(res.Body)
+			if err != nil {
+				return Perfil{}, err
+			}
+			break
 		}
+		var qhr QueryHashResponse
+		if err := json.Unmarshal(b, &qhr); err != nil {
+			return Perfil{}, err
+		}
+		edgeOwnerToTimelineMedia = qhr.Data.User.EdgeOwnerToTimelineMedia
+		res.Body.Close()
+		time.Sleep(time.Millisecond * 4)
 	}
-	for _, enderecoDownload := range enderecosDownload {
-		nome := path.Base(enderecoDownload)
-		res2, err := http.Get(enderecoDownload)
-		if err != nil {
-			return err
-		}
-		bytes, err = ioutil.ReadAll(res2.Body)
-		if err != nil {
-			return err
-		}
-		if err := ioutil.WriteFile(nome, bytes, 0664); err != nil {
-			return err
-		}
-		res2.Body.Close()
-	}
-	return nil
+	return perfil, nil
 }
