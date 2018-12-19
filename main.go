@@ -13,6 +13,13 @@ const (
 )
 
 func main() {
+	var comando string
+	if len(os.Args) > 1 {
+		comando = os.Args[1]
+	}
+	if comando != "" && comando != "file" {
+		log.Fatal("comando desconhecido")
+	}
 	usernames := make(map[string]bool)
 	b, err := ioutil.ReadFile("./in.txt")
 	if err != nil {
@@ -32,16 +39,16 @@ func main() {
 		}
 		link = strings.Replace(link[0:index], "//instagram", "//www.instagram", 1)
 		if usernames[link] {
+			fmt.Println("Repetido:", link)
 			continue
 		}
 		usernames[link] = true
 		fmt.Printf("Perfil: %v. %v de %v.\n", link, i+1, len(links))
 		out.WriteString(link + "\r\n")
-		perfil, err := PerfilCarrega(link)
-		if _, ok := usernames[perfil.UserName]; ok {
+		if comando == "file" {
 			continue
 		}
-		usernames[perfil.UserName] = true
+		perfil, err := PerfilCarrega(link)
 		if err != nil {
 			log.Fatal(err)
 		}
