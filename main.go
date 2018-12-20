@@ -43,7 +43,7 @@ func main() {
 			continue
 		}
 		usernames[link] = true
-		fmt.Printf("Perfil: %v. %v de %v.\n", link, i+1, len(links))
+		fmt.Printf("Perfil: %v - %v de %v.\n", link, i+1, len(links))
 		out.WriteString(link + "\r\n")
 		if comando == "file" {
 			continue
