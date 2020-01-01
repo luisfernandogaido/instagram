@@ -21,7 +21,7 @@ func init() {
 	case "NOTE-GAIDO":
 		dir = "C:\\GoPrograms\\i"
 	case "lemp":
-		dir = "/var/www/html"
+		dir = "/var/www/html/is"
 	default:
 		log.Fatal("host desconhecido")
 	}
